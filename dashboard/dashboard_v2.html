@@ -1,0 +1,478 @@
+<!--
+  AIR QUALITY DASHBOARD v2 - Node-RED ui_template
+  =================================================
+  Threshold-based CO/NO2 status with ppm/ppb unit handling.
+  Selectable T/RH source: SHT3x | DHT22 | DHT11 (ADS1115 status-only).
+  Tolerates msg.payload as object OR string.
+-->
+
+<style>
+.aqd {
+  --bg: #0b0f14; --panel: #131a22; --panel2: #0f151c; --line: #1e2935;
+  --txt: #e6edf3; --muted: #7d8a99;
+  --green: #2bd576; --co: #38bdf8; --no2: #a78bfa;
+  --temp: #fb923c; --hum: #38bdf8;
+  font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+  color: var(--txt); background: var(--bg);
+  padding: 16px; border-radius: 12px;
+  width: 100%; max-width: 100%; overflow-x: hidden;
+}
+.aqd, .aqd * { box-sizing: border-box; }
+.aqd h1 { font-size: 22px; margin: 0; font-weight: 600; }
+.aqd .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.aqd .header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:18px; }
+.aqd .conn { display:flex; align-items:center; gap:8px; background:var(--panel);
+  border:1px solid var(--line); border-radius:20px; padding:6px 14px; font-size:13px; }
+.aqd .dot { width:8px; height:8px; border-radius:50%; background:var(--green);
+  box-shadow:0 0 8px var(--green); }
+.aqd .dot.stale { background:#f59e0b; box-shadow:0 0 8px #f59e0b; }
+
+.aqd .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:14px; margin-bottom:16px; }
+.aqd .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; }
+.aqd .card .top { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+.aqd .card .icon { width:38px; height:38px; border-radius:10px; display:flex;
+  align-items:center; justify-content:center; font-size:18px; }
+.aqd .card .name { font-weight:600; font-size:15px; }
+.aqd .card .desc { color:var(--muted); font-size:11px; }
+.aqd .card .val { font-size:34px; font-weight:700; line-height:1; }
+.aqd .card .unit { font-size:14px; color:var(--muted); font-weight:400; margin-left:4px; }
+.aqd .card .foot { margin-top:10px; font-size:12px; display:flex; align-items:center; gap:6px; }
+.aqd .card .range { color:var(--muted); margin-left:auto; }
+
+.aqd .row2 { display:grid; grid-template-columns:2fr 1fr; gap:18px; }
+.aqd .panel { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; }
+.aqd .row2 .panel { min-height: 360px; }
+.aqd .panel h2 { font-size:16px; margin:0 0 14px; font-weight:600; }
+.aqd .ring-wrap { display:flex; align-items:center; gap:18px; }
+.aqd .ring { position:relative; width:130px; height:130px; flex:0 0 auto; }
+.aqd .ring .label { position:absolute; inset:0; display:flex; align-items:center;
+  justify-content:center; font-size:18px; font-weight:600; }
+.aqd .status-txt { font-size:14px; }
+.aqd .status-txt .big { font-size:18px; font-weight:600; color:var(--green); }
+
+.aqd .sensors { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; margin-top:14px; }
+.aqd .schip { background:var(--panel2); border:1px solid var(--line); border-radius:10px;
+  padding:10px 12px; font-size:12px; }
+.aqd .schip .nm { font-weight:600; margin-bottom:4px; }
+.aqd .schip .on { color:var(--green); display:flex; align-items:center; gap:5px; }
+
+/* Selectable sensor boxes (SHT3x/DHT22/DHT11) */
+.aqd .schip.selectable { cursor:pointer;
+  transition: border-color .15s ease, box-shadow .15s ease, background .15s ease; }
+.aqd .schip.selectable:hover {
+  border-color: rgba(56,189,248,.55);
+  background: rgba(56,189,248,.06); }
+.aqd .schip.active {
+  border-color: #38bdf8;
+  background: rgba(56,189,248,.10);
+  box-shadow: 0 0 0 1px rgba(56,189,248,.25), 0 0 18px rgba(56,189,248,.10); }
+.aqd .selected-badge { color:#38bdf8; font-size:11px; margin-top:4px; }
+
+.aqd .report { margin-top:14px; padding:12px; background:var(--panel2);
+  border:1px solid var(--line); border-radius:10px; font-size:12px;
+  color:var(--muted); line-height:1.5; }
+.aqd .legend { display:flex; gap:16px; font-size:12px; color:var(--muted); margin-bottom:8px; flex-wrap:wrap; }
+.aqd .legend span { display:flex; align-items:center; gap:5px; }
+.aqd .lg { width:10px; height:3px; border-radius:2px; display:inline-block; }
+</style>
+
+<div class="aqd" ng-init="init()">
+  <div class="header">
+    <div>
+      <h1>Air Quality Monitoring</h1>
+      <div class="sub">Real-time environmental monitoring</div>
+    </div>
+    <div class="conn">
+      <span class="dot" ng-class="{stale: stale}"></span>
+      <span ng-if="!stale">Connected</span>
+      <span ng-if="stale">No data</span>
+    </div>
+  </div>
+
+  <!-- METRIC CARDS -->
+  <div class="cards">
+    <div class="card">
+      <div class="top">
+        <div class="icon" style="background:rgba(56,189,248,.15); color:var(--co)">◉</div>
+        <div><div class="name">CO</div><div class="desc">Carbon Monoxide</div></div>
+      </div>
+      <div class="val">{{fmt(coDisplay,1)}}<span class="unit">ppb</span></div>
+      <div class="foot">
+        <span class="dot" ng-style="{background: coStatusColor, 'box-shadow':'0 0 8px '+coStatusColor}"></span>
+        <span ng-style="{color: coStatusColor}">{{coStatusText}}</span>
+        <span class="range">{{fmt(coPpm,3)}} ppm</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="top">
+        <div class="icon" style="background:rgba(167,139,250,.15); color:var(--no2)">◉</div>
+        <div><div class="name">NO₂</div><div class="desc">Nitrogen Dioxide</div></div>
+      </div>
+      <div class="val">{{fmt(no2,1)}}<span class="unit">ppb</span></div>
+      <div class="foot">
+        <span class="dot" ng-style="{background: no2StatusColor, 'box-shadow':'0 0 8px '+no2StatusColor}"></span>
+        <span ng-style="{color: no2StatusColor}">{{no2StatusText}}</span>
+        <span class="range">0 – 200 ppb</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="top">
+        <div class="icon" style="background:rgba(251,146,60,.15); color:var(--temp)">🌡</div>
+        <div><div class="name">Temperature</div><div class="desc">{{selectedSourceLabel}} selected</div></div>
+      </div>
+      <div class="val">{{fmt(temp,1)}}<span class="unit">°C</span></div>
+      <div class="foot"><span class="dot"></span><span>{{comfortT(temp)}}</span>
+        <span class="range">18 – 28 °C</span></div>
+    </div>
+
+    <div class="card">
+      <div class="top">
+        <div class="icon" style="background:rgba(56,189,248,.15); color:var(--hum)">💧</div>
+        <div><div class="name">Humidity</div><div class="desc">{{selectedSourceLabel}} selected</div></div>
+      </div>
+      <div class="val">{{fmt(hum,1)}}<span class="unit">%</span></div>
+      <div class="foot"><span class="dot"></span><span>{{comfortH(hum)}}</span>
+        <span class="range">30 – 70 %</span></div>
+    </div>
+  </div>
+
+  <!-- TRENDS + STATUS -->
+  <div class="row2">
+    <div class="panel">
+      <h2>Air Quality Trends</h2>
+      <div class="legend">
+        <span><i class="lg" style="background:var(--co)"></i>CO (ppb)</span>
+        <span><i class="lg" style="background:var(--no2)"></i>NO₂ (ppb)</span>
+        <span><i class="lg" style="background:var(--temp)"></i>Temp (°C)</span>
+        <span><i class="lg" style="background:var(--hum)"></i>Humidity (%)</span>
+      </div>
+      <div style="position:relative; height:300px; width:100%;">
+        <canvas id="trendChart"></canvas>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Air Quality</h2>
+      <div class="ring-wrap">
+        <div class="ring">
+          <canvas id="ringChart"></canvas>
+          <div class="label" ng-style="{color: aqColor}">{{aqText}}</div>
+        </div>
+        <div class="status-txt">
+          Air quality is <span class="big" ng-style="{color: aqColor}">{{aqText}}</span><br>
+          <span style="color:var(--muted)">{{aqDetail}}</span>
+        </div>
+      </div>
+
+      <div class="sensors">
+        <div class="schip selectable"
+             ng-click="selectSource('sht')"
+             ng-class="{active: selectedSource === 'sht'}">
+          <div class="nm">SHT3x</div>
+          <div class="on"><span class="dot" ng-class="{stale:!okSht}"></span>
+            {{okSht ? 'Online' : 'No data'}}</div>
+          <div class="selected-badge" ng-if="selectedSource === 'sht'">✓ Selected source</div>
+        </div>
+        <div class="schip selectable"
+             ng-click="selectSource('dht22')"
+             ng-class="{active: selectedSource === 'dht22'}">
+          <div class="nm">DHT22</div>
+          <div class="on"><span class="dot" ng-class="{stale:!okD22}"></span>
+            {{okD22 ? 'Online' : 'No data'}}</div>
+          <div class="selected-badge" ng-if="selectedSource === 'dht22'">✓ Selected source</div>
+        </div>
+        <div class="schip selectable"
+             ng-click="selectSource('dht11')"
+             ng-class="{active: selectedSource === 'dht11'}">
+          <div class="nm">DHT11</div>
+          <div class="on"><span class="dot" ng-class="{stale:!okD11}"></span>
+            {{okD11 ? 'Online' : 'No data'}}</div>
+          <div class="selected-badge" ng-if="selectedSource === 'dht11'">✓ Selected source</div>
+        </div>
+        <div class="schip">
+          <div class="nm">ADS1115</div>
+          <div class="on"><span class="dot" ng-class="{stale:!okGas}"></span>
+            {{okGas ? 'Online' : 'No data'}}</div>
+        </div>
+      </div>
+
+      <div class="report" ng-bind="reportText"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(scope) {
+  // ============ State ============
+  scope.co = null; scope.coDisplay = null; scope.coPpm = null;
+  scope.no2 = null;
+  scope.temp = null; scope.hum = null;
+  scope.stale = true;
+  scope.okSht = false; scope.okD22 = false; scope.okD11 = false; scope.okGas = false;
+  scope.aqText = '—'; scope.aqColor = '#7d8a99';
+  scope.aqDetail = 'Waiting for data...';
+  scope.coStatusText = '—'; scope.coStatusColor = '#7d8a99';
+  scope.no2StatusText = '—'; scope.no2StatusColor = '#7d8a99';
+  scope.selectedSource = 'sht';
+  scope.selectedSourceLabel = 'SHT3x';
+  scope.latestPayload = {};
+  scope.reportText = 'Waiting for sensor data...';
+
+  var trend = null, ring = null, lastMsgTime = 0;
+  var hist = { t: [], co: [], no2: [], temp: [], hum: [] };
+  var MAXPTS = 30;
+
+  // ============ Source map ============
+  var sources = {
+    sht:   { label:'SHT3x', tempField:'sht_temp_c',   humField:'sht_rh_pct' },
+    dht22: { label:'DHT22', tempField:'dht22_temp_c', humField:'dht22_rh_pct' },
+    dht11: { label:'DHT11', tempField:'dht11_temp_c', humField:'dht11_rh_pct' }
+  };
+
+  // ============ Display helpers ============
+  scope.fmt = function(v, d) {
+    return (v === null || v === undefined || isNaN(v)) ? '—' : Number(v).toFixed(d);
+  };
+  scope.comfortT = function(v) {
+    if (v === null || isNaN(v)) return '—';
+    return (v >= 18 && v <= 28) ? 'Comfort' : (v < 18 ? 'Cold' : 'Warm');
+  };
+  scope.comfortH = function(v) {
+    if (v === null || isNaN(v)) return '—';
+    return (v >= 30 && v <= 70) ? 'Comfort' : (v < 30 ? 'Dry' : 'Humid');
+  };
+
+  // ============ Number / unit utilities ============
+  function num(v){ return (typeof v === 'number' && !isNaN(v)) ? v : null; }
+  function validNumber(v){ return typeof v === 'number' && !isNaN(v); }
+
+  function getCOppm(p) {
+    if (validNumber(p.co_ppm)) return p.co_ppm;
+    if (validNumber(p.co_ppb)) return p.co_ppb / 1000;
+    return null;
+  }
+  function getCOppbDisplay(p) {
+    if (validNumber(p.co_ppb)) return p.co_ppb;
+    if (validNumber(p.co_ppm)) return p.co_ppm * 1000;
+    return null;
+  }
+  function getNO2ppb(p) {
+    if (validNumber(p.no2_ppb)) return p.no2_ppb;
+    if (validNumber(p.no2_ppm)) return p.no2_ppm * 1000;
+    return null;
+  }
+
+  // ============ Threshold-based status ============
+  function gasStatusCO(co_ppm) {
+    if (!validNumber(co_ppm) || co_ppm < 0) return {level:-1, text:'No data', color:'#7d8a99'};
+    if (co_ppm <= 5)  return {level:0, text:'Good',     color:'#2bd576'};
+    if (co_ppm <= 9)  return {level:1, text:'Elevated', color:'#38bdf8'};
+    if (co_ppm <= 35) return {level:2, text:'Warning',  color:'#f59e0b'};
+    return                    {level:3, text:'Alert',    color:'#ef4444'};
+  }
+  function gasStatusNO2(no2_ppb) {
+    if (!validNumber(no2_ppb) || no2_ppb < 0) return {level:-1, text:'No data', color:'#7d8a99'};
+    if (no2_ppb <= 21)  return {level:0, text:'Good',     color:'#2bd576'};
+    if (no2_ppb <= 53)  return {level:1, text:'Elevated', color:'#38bdf8'};
+    if (no2_ppb <= 106) return {level:2, text:'Warning',  color:'#f59e0b'};
+    return                      {level:3, text:'Alert',    color:'#ef4444'};
+  }
+  function worseStatus(a, b) {
+    if (!a || a.level < 0) return b || a;
+    if (!b || b.level < 0) return a || b;
+    return a.level >= b.level ? a : b;
+  }
+
+  // ============ Selected source -> temp/hum ============
+  function updateSelectedTempHumidity(p) {
+    var src = sources[scope.selectedSource] || sources.sht;
+    scope.selectedSourceLabel = src.label;
+    scope.temp = num(p[src.tempField]);
+    scope.hum  = num(p[src.humField]);
+  }
+
+  scope.selectSource = function(key) {
+    if (!sources[key]) return;
+    scope.selectedSource = key;
+    updateSelectedTempHumidity(scope.latestPayload || {});
+    updateReport();
+    scope.$applyAsync();
+  };
+
+  // ============ Compact report ============
+  function fmtMaybe(v, d) {
+    return (v === null || v === undefined || isNaN(v)) ? '—' : Number(v).toFixed(d);
+  }
+  function updateReport() {
+    var now = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+    var coPart  = (scope.coDisplay !== null)
+        ? fmtMaybe(scope.coDisplay,0) + ' ppb (' + fmtMaybe(scope.coPpm,3) + ' ppm) – ' + scope.coStatusText
+        : 'no data';
+    var no2Part = (scope.no2 !== null)
+        ? fmtMaybe(scope.no2,0) + ' ppb – ' + scope.no2StatusText
+        : 'no data';
+    scope.reportText =
+      'Current air quality is ' + scope.aqText + '. ' +
+      'CO is ' + coPart + '. ' +
+      'NO₂ is ' + no2Part + '. ' +
+      'Temperature and humidity are sourced from ' + scope.selectedSourceLabel + '. ' +
+      'Last update: ' + now + '.';
+  }
+
+  // ============ Chart.js (v4 from /chart.js) ============
+  var ChartV4 = null;
+  function loadChartJs(cb) {
+    var prevChart = window.Chart;
+    var s = document.createElement('script');
+    s.src = '/chart.js';
+    s.onload = function() {
+      ChartV4 = window.Chart;
+      window.Chart = prevChart;   // restore Dashboard's bundled Chart v2
+      cb();
+    };
+    s.onerror = function(){ console.error('chart.js failed to load from /chart.js'); };
+    document.head.appendChild(s);
+  }
+
+  scope.init = function() {
+    if (scope._inited) return; scope._inited = true;
+    loadChartJs(function() {
+      var tctx = document.getElementById('trendChart');
+      if (tctx) {
+        trend = new ChartV4(tctx, {
+          type: 'line',
+          data: { labels: [], datasets: [
+            { label:'CO',  data:[], borderColor:'#38bdf8', tension:.4, pointRadius:0, borderWidth:2 },
+            { label:'NO2', data:[], borderColor:'#a78bfa', tension:.4, pointRadius:0, borderWidth:2 },
+            { label:'Temp',data:[], borderColor:'#fb923c', tension:.4, pointRadius:0, borderWidth:2, yAxisID:'y2' },
+            { label:'Hum', data:[], borderColor:'#22d3ee', tension:.4, pointRadius:0, borderWidth:2, yAxisID:'y2' }
+          ]},
+          options: {
+            responsive:true, maintainAspectRatio:false, animation:false,
+            plugins:{ legend:{ display:false } },
+            scales:{
+              x:{ ticks:{ color:'#7d8a99', maxTicksLimit:6 }, grid:{ color:'#1e2935' } },
+              y:{ position:'left', ticks:{ color:'#7d8a99' }, grid:{ color:'#1e2935' } },
+              y2:{ position:'right', ticks:{ color:'#7d8a99' }, grid:{ display:false }, min:0, max:100 }
+            }
+          }
+        });
+      }
+      var rctx = document.getElementById('ringChart');
+      if (rctx) {
+        ring = new ChartV4(rctx, {
+          type:'doughnut',
+          data:{ datasets:[{ data:[100,0], backgroundColor:['#2bd576','#1e2935'],
+            borderWidth:0, circumference:360 }] },
+          options:{ cutout:'80%', plugins:{ legend:{ display:false }, tooltip:{ enabled:false } } }
+        });
+      }
+      setInterval(function() {
+        var s = (Date.now() - lastMsgTime) > 15000;
+        if (s !== scope.stale) { scope.stale = s; scope.$applyAsync(); }
+      }, 2000);
+    });
+  };
+
+  // ============ Compute AQ from CO/NO2 with thresholds ============
+  function computeAQ(p) {
+    var coPpm  = getCOppm(p);
+    var coPpb  = getCOppbDisplay(p);
+    var no2Ppb = getNO2ppb(p);
+
+    var coStatus  = gasStatusCO(coPpm);
+    var no2Status = gasStatusNO2(no2Ppb);
+    var overall   = worseStatus(coStatus, no2Status);
+
+    scope.coPpm     = coPpm;
+    scope.coDisplay = coPpb;
+    scope.co        = coPpb;        // for the trend chart history (CO in ppb)
+    scope.no2       = no2Ppb;
+
+    scope.coStatusText  = coStatus.text;
+    scope.coStatusColor = coStatus.color;
+    scope.no2StatusText  = no2Status.text;
+    scope.no2StatusColor = no2Status.color;
+
+    scope.aqText  = overall.text;
+    scope.aqColor = overall.color;
+    if (overall.text === 'Good') {
+      scope.aqDetail = 'CO and NO₂ are within normal range.';
+    } else if (overall.level < 0) {
+      scope.aqDetail = 'Waiting for valid CO/NO₂ data...';
+    } else if (overall === coStatus) {
+      scope.aqDetail = 'CO is ' + coStatus.text + ' based on the configured threshold.';
+    } else {
+      scope.aqDetail = 'NO₂ is ' + no2Status.text + ' based on the configured threshold.';
+    }
+
+    // Ring fill: scale by worst severity level (Good=full green, Alert=tiny)
+    var pct = 100;
+    if (overall.level === 1) pct = 66;
+    else if (overall.level === 2) pct = 33;
+    else if (overall.level === 3) pct = 12;
+    if (ring) {
+      ring.data.datasets[0].data = [pct, 100 - pct];
+      ring.data.datasets[0].backgroundColor = [overall.color, '#1e2935'];
+      ring.update('none');
+    }
+  }
+
+  // ============ Live update ============
+  scope.$watch('msg', function(m) {
+    if (!m || m.payload === undefined || m.payload === null) return;
+
+    // Tolerate string OR object payload (defensive: if json-node didn't run)
+    var p = m.payload;
+    if (typeof p === 'string') {
+      try { p = JSON.parse(p); }
+      catch(e) { return; }   // not parseable, ignore
+    }
+    if (typeof p !== 'object') return;
+
+    scope.latestPayload = p;
+
+    // Sensor liveness
+    scope.okSht = num(p.sht_temp_c) !== null;
+    scope.okD22 = num(p.dht22_temp_c) !== null;
+    scope.okD11 = num(p.dht11_temp_c) !== null;
+    scope.okGas = num(p.co_mv) !== null || num(p.co_ppb) !== null || num(p.co_ppm) !== null;
+
+    // Temp/humidity from selected source
+    updateSelectedTempHumidity(p);
+
+    // CO/NO2 with thresholds
+    computeAQ(p);
+
+    lastMsgTime = Date.now();
+    scope.stale = false;
+
+    updateReport();
+
+    // Trend chart history
+    if (trend) {
+      var ts = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+      hist.t.push(ts);
+      hist.co.push(scope.co);
+      hist.no2.push(scope.no2);
+      hist.temp.push(scope.temp);
+      hist.hum.push(scope.hum);
+      if (hist.t.length > MAXPTS) {
+        hist.t.shift(); hist.co.shift(); hist.no2.shift();
+        hist.temp.shift(); hist.hum.shift();
+      }
+      trend.data.labels = hist.t;
+      trend.data.datasets[0].data = hist.co;
+      trend.data.datasets[1].data = hist.no2;
+      trend.data.datasets[2].data = hist.temp;
+      trend.data.datasets[3].data = hist.hum;
+      trend.update('none');
+    }
+  });
+
+  // Fallback init in case ng-init fires before scope is ready
+  setTimeout(function(){ if (scope.init) scope.init(); }, 500);
+})(scope);
+</script>
