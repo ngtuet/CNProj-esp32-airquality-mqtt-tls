@@ -9,11 +9,11 @@ Built for the Communication Networks lab capstone at Vietnamese–German Univers
 ## Architecture
 
 ```
-┌─────────────────────┐       UART2 @ 115200        ┌─────────────────────┐
+┌─────────────────────┐       UART2 @ 115200         ┌─────────────────────┐
 │   Sensor Node (A)   │  ────────────────────────▶   │  Gateway Node (B)   │
 │   ESP32-WROOM-32    │   GPIO17 TX ──▶ GPIO16 RX   │  ESP32-WROOM-32    │
 │                     │   Common GND                 │                     │
-│  • SHT3x  (I²C)    │                              │  • WiFi STA         │
+│  • SHT3x  (I²C)     │                              │  • WiFi STA         │
 │  • DHT22  (GPIO25)  │                              │  • MQTT over TLS    │
 │  • DHT11  (GPIO26)  │                              │  • Stateless bridge │
 │  • ADS1115 (I²C)    │                              └────────┬────────────┘
@@ -148,11 +148,17 @@ mosquitto -c mosquitto.conf -v
 # Terminal 2: start Node-RED
 node-red
 
-# Terminal 3: push fake data
+# Terminal 3: push fake data (topic must match your Node-RED MQTT-in node)
 mosquitto_pub -h localhost -p 8884 --cafile certs/ca.crt \
   -u esp_gateway -P your_password \
-  -t "vgu/airquality/node1" \
+  -t "your/topic/here" \
   -m '{"co_ppb":1.2,"no2_ppb":38,"sht_temp_c":26.3,"sht_rh_pct":61,"dht22_temp_c":26.5,"dht22_rh_pct":62,"dht11_temp_c":27.2,"dht11_rh_pct":55,"co_mv":120.5,"no2_mv":-7.2}'
+> The MQTT topic is user-defined. It must be the same in three places:
+> 1. **Gateway firmware** — `MQTT_TOPIC` in `gateway-node/main/main.c`
+> 2. **Node-RED flow** — the `mqtt in` node's topic field (edit in the Node-RED editor)
+> 3. **Test commands** — the `-t` argument to `mosquitto_pub` / `mosquitto_sub`
+>
+> The default used in this project is `vgu/airquality/node1`.
 ```
 
 ## Calibration
