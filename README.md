@@ -189,6 +189,22 @@ The sensors were calibrated by co-location against an Aeroqual S500 reference in
 
 The overall air quality indicator takes the **worse** of CO and NO₂ status. CO is converted from ppb to ppm (`co_ppm = co_ppb / 1000`) before threshold comparison.
 
+## Security Validation
+
+The [`security/`](security/) folder contains an automated benchmark script that tests the Mosquitto broker configuration against 11 attack scenarios (corresponding to Table II in the lab report):
+
+```bash
+pip install paho-mqtt
+
+python security/mqtt_tls_benchmark.py \
+  --host 127.0.0.1 --port 8884 \
+  --cafile certs/ca.crt \
+  --user esp_gateway --password your_password \
+  --topic "your/topic/here"
+```
+
+Tests include: plaintext rejection, TLS handshake verification, hostname mismatch, missing/wrong credentials, ACL cross-user isolation, and replay detection. See [`security/README.md`](security/README.md) for full details and expected results.
+
 ## Hardware
 
 - 2× ESP32-WROOM-32 dev boards (38-pin sensor, 30-pin gateway)
