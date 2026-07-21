@@ -216,4 +216,4 @@ Tests include: plaintext rejection, TLS handshake verification, hostname mismatc
 
 ## License
 
-This project was developed as a lab capstone for academic purposes. See the [report](report/report.tex) for full technical documentation.
+This project was developed as a lab capstone for academic purposes. See the [report](report/report.pdf) for full technical documentation.
